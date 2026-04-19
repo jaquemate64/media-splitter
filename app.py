@@ -1,5 +1,4 @@
-from pathlib import Path
-code = r'''import gradio as gr
+import gradio as gr
 import os
 import re
 import shutil
@@ -152,6 +151,3 @@ demo.queue().launch(
     server_port=7863,
     share=False
 )
-'''
-Path('output/app_fixed.py').write_text(code, encoding='utf-8')
-print('written', Path('output/app_fixed.py').resolve())
