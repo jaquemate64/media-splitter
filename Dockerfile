@@ -12,6 +12,9 @@ COPY app.py .
 RUN mkdir -p /tmp/gradio /tmp/media_parts
 ENV GRADIO_TEMP_DIR=/tmp/gradio
 ENV GRADIO_SERVER_NAME=0.0.0.0
+ENV WHISPER_MODEL=tiny
+ENV WHISPER_DEVICE=cpu
+ENV WHISPER_COMPUTE_TYPE=int8
 
 EXPOSE 7863
 
