@@ -16,10 +16,12 @@ DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 MODEL = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
 
+
 def safe_name(name):
     name = os.path.basename(str(name))
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
     return name or "archivo"
+
 
 def download_url(url):
     url = (url or "").strip()
@@ -35,6 +37,7 @@ def download_url(url):
             if chunk:
                 f.write(chunk)
     return path
+
 
 def split_media(input_path, minutes):
     input_path = Path(input_path)
@@ -70,6 +73,7 @@ def split_media(input_path, minutes):
 
     return str(zip_path), [str(p) for p in parts]
 
+
 def transcribe_file(file_path, language):
     segments, info = MODEL.transcribe(
         file_path,
@@ -82,6 +86,7 @@ def transcribe_file(file_path, language):
         if t:
             text_parts.append(t)
     return " ".join(text_parts).strip()
+
 
 def process(file_path, url, minutes, language, progress=gr.Progress()):
     path = None
@@ -115,6 +120,7 @@ def process(file_path, url, minutes, language, progress=gr.Progress()):
         return f"Error FFmpeg:\n{err}", None, None, None
     except Exception as e:
         return f"Error: {str(e)}", None, None, None
+
 
 with gr.Blocks(title="Media Studio") as demo:
     gr.Markdown("# Media Studio")
