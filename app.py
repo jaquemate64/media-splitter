@@ -88,7 +88,7 @@ def transcribe_file(file_path, language):
     return " ".join(text_parts).strip()
 
 
-def process(file_path, url, minutes, language, progress=gr.Progress()):
+def process(file_path, url, mode, minutes, language, progress=gr.Progress()):
     path = None
 
     if file_path:
@@ -100,6 +100,12 @@ def process(file_path, url, minutes, language, progress=gr.Progress()):
         return "Sube un archivo o pega una URL directa.", None, None, None
 
     try:
+        if mode == "Completo":
+            progress(0.1, desc="Transcribiendo archivo completo")
+            transcript = transcribe_file(path, language)
+            progress(1.0, desc="Terminado")
+            return "Listo: archivo completo transcrito.", None, None, transcript
+
         progress(0.05, desc="Dividiendo archivo")
         zip_path, parts = split_media(path, minutes)
 
@@ -124,11 +130,17 @@ def process(file_path, url, minutes, language, progress=gr.Progress()):
 
 with gr.Blocks(title="Media Studio") as demo:
     gr.Markdown("# Media Studio")
-    gr.Markdown("Sube un archivo de audio/video o pega un enlace directo. La app lo dividirá en partes y lo transcribirá automáticamente.")
+    gr.Markdown("Sube un archivo de audio/video o pega un enlace directo. Puedes procesarlo completo o dividirlo en partes para transcribirlo.")
 
     with gr.Row():
         file_in = gr.File(label="Sube audio o video", type="filepath")
         url_in = gr.Textbox(label="O pega una URL directa", placeholder="https://.../archivo.mp4")
+
+    mode = gr.Radio(
+        ["Completo", "Por partes"],
+        value="Por partes",
+        label="Modo de proceso"
+    )
 
     with gr.Row():
         minutes = gr.Slider(1, 15, value=5, step=1, label="Minutos por parte")
@@ -143,7 +155,7 @@ with gr.Blocks(title="Media Studio") as demo:
 
     btn.click(
         fn=process,
-        inputs=[file_in, url_in, minutes, language],
+        inputs=[file_in, url_in, mode, minutes, language],
         outputs=[status, zip_out, parts_out, transcript_out]
     )
 
