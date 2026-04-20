@@ -39,27 +39,27 @@ def download_url(url):
 def split_media(input_path, minutes):
     input_path = Path(input_path)
     stem = safe_name(input_path.stem)
-    ext = input_path.suffix or ".bin"
 
     job_dir = OUT_DIR / stem
     if job_dir.exists():
         shutil.rmtree(job_dir)
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    out_pattern = str(job_dir / f"{stem}_part_%03d{ext}")
+    out_pattern = str(job_dir / f"{stem}_part_%03d.ts")
     cmd = [
         "ffmpeg", "-y",
         "-i", str(input_path),
         "-map", "0",
+        "-c", "copy",
         "-f", "segment",
         "-segment_time", str(int(minutes) * 60),
-        "-c", "copy",
         "-reset_timestamps", "1",
+        "-segment_format", "mpegts",
         out_pattern,
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    parts = sorted(job_dir.glob(f"{stem}_part_*{ext}"))
+    parts = sorted(job_dir.glob(f"{stem}_part_*.ts"))
     if not parts:
         raise RuntimeError("No se generaron partes.")
 
