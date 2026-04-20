@@ -89,34 +89,39 @@ def transcribe_file(file_path, language):
 
 def process_whole(file_path, url, language, progress=gr.Progress()):
     path = None
-
     if file_path:
         path = str(file_path)
     elif url and url.strip():
         path = download_url(url)
 
     if not path:
-        return "Sube un archivo o pega una URL directa.", None, None, None, []
+        return "Sube un archivo o pega una URL directa.", None, None, None, [], None, gr.update(interactive=False)
 
     try:
         progress(0.1, desc="Transcribiendo archivo completo")
         transcript = transcribe_file(path, language)
         progress(1.0, desc="Terminado")
-        return "Listo: archivo completo transcrito.", None, None, transcript, []
-
+        return (
+            "Listo: archivo completo transcrito.",
+            None,
+            None,
+            transcript,
+            [],
+            None,
+            gr.update(interactive=True),
+        )
     except Exception as e:
-        return f"Error: {str(e)}", None, None, None, []
+        return f"Error: {str(e)}", None, None, None, [], None, gr.update(interactive=False)
 
 def process_parts(file_path, url, minutes, language, progress=gr.Progress()):
     path = None
-
     if file_path:
         path = str(file_path)
     elif url and url.strip():
         path = download_url(url)
 
     if not path:
-        return "Sube un archivo o pega una URL directa.", None, None, None, [], gr.update(interactive=False)
+        return "Sube un archivo o pega una URL directa.", None, None, None, [], gr.update(interactive=False), gr.update(choices=[], value=None)
 
     try:
         input_path = Path(path)
@@ -128,6 +133,7 @@ def process_parts(file_path, url, minutes, language, progress=gr.Progress()):
 
         transcripts = []
         results = []
+        part_choices = [p.name for p in parts]
 
         total = max(len(parts), 1)
         for idx, part in enumerate(parts, 1):
@@ -150,13 +156,14 @@ def process_parts(file_path, url, minutes, language, progress=gr.Progress()):
             [str(p) for p in parts],
             full_text,
             results,
-            gr.update(interactive=ready)
+            gr.update(interactive=ready),
+            gr.update(choices=part_choices, value=part_choices[0] if part_choices else None),
         )
 
     except Exception as e:
-        return f"Error: {str(e)}", None, None, None, [], gr.update(interactive=False)
+        return f"Error: {str(e)}", None, None, None, [], gr.update(interactive=False), gr.update(choices=[], value=None)
 
-def retry_part(file_path, url, minutes, language, part_name, progress=gr.Progress()):
+def retry_part(file_path, url, language, part_name, progress=gr.Progress()):
     if not part_name:
         return "Selecciona una parte para reintentar.", None, None, None, [], gr.update(interactive=False)
 
@@ -176,7 +183,7 @@ def retry_part(file_path, url, minutes, language, part_name, progress=gr.Progres
 
         part_path = job_dir / part_name
         if not part_path.exists():
-            return f"No existe la parte: {part_name}", None, None, None, [], gr.update(interactive=False)
+            return f"No existe la parte: {part_name}", None, None, None, [f"{part_name}: ERROR"], gr.update(interactive=False)
 
         progress(0.2, desc=f"Reintentando {part_name}")
         transcript = transcribe_file(str(part_path), language)
@@ -188,11 +195,32 @@ def retry_part(file_path, url, minutes, language, part_name, progress=gr.Progres
             None,
             f"### {part_name}\n\n{transcript}\n",
             [f"{part_name}: OK"],
-            gr.update(interactive=True)
+            gr.update(interactive=True),
         )
 
     except Exception as e:
         return f"Error al reintentar: {str(e)}", None, None, None, [f"{part_name}: ERROR"], gr.update(interactive=False)
+
+def change_mode(mode):
+    if mode == "Todo junto":
+        return (
+            gr.update(visible=True),
+            gr.update(visible=True),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(interactive=False),
+            gr.update(interactive=False),
+        )
+    return (
+        gr.update(visible=True),
+        gr.update(visible=True),
+        gr.update(visible=True),
+        gr.update(visible=True),
+        gr.update(visible=True),
+        gr.update(interactive=False),
+        gr.update(interactive=False),
+    )
 
 with gr.Blocks(title="Media Studio") as demo:
     gr.Markdown("# Media Studio")
@@ -204,7 +232,7 @@ with gr.Blocks(title="Media Studio") as demo:
 
     mode = gr.Dropdown(
         ["Todo junto", "Por partes"],
-        value="Por partes",
+        value="Todo junto",
         label="Modo de procesamiento"
     )
 
@@ -226,25 +254,27 @@ with gr.Blocks(title="Media Studio") as demo:
     transcript_out = gr.Textbox(label="Transcripción completa", lines=18)
     part_results = gr.Textbox(label="Estado por parte", lines=10)
 
+    mode.change(
+        fn=change_mode,
+        inputs=mode,
+        outputs=[minutes, btn_parts, btn_retry, btn_send, part_selector, btn_whole, btn_parts]
+    )
+
     btn_whole.click(
         fn=process_whole,
         inputs=[file_in, url_in, language],
-        outputs=[status, zip_out, parts_out, transcript_out, part_results]
+        outputs=[status, zip_out, parts_out, transcript_out, part_results, part_selector, btn_send]
     )
 
     btn_parts.click(
         fn=process_parts,
         inputs=[file_in, url_in, minutes, language],
-        outputs=[status, zip_out, parts_out, transcript_out, part_results, btn_send]
-    ).then(
-        lambda files: gr.Dropdown(choices=files if files else [], value=None, interactive=True),
-        inputs=parts_out,
-        outputs=part_selector
+        outputs=[status, zip_out, parts_out, transcript_out, part_results, btn_send, part_selector]
     )
 
     btn_retry.click(
         fn=retry_part,
-        inputs=[file_in, url_in, minutes, language, part_selector],
+        inputs=[file_in, url_in, language, part_selector],
         outputs=[status, zip_out, parts_out, transcript_out, part_results, btn_send]
     )
 
