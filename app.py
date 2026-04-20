@@ -11,17 +11,16 @@ from faster_whisper import WhisperModel
 
 OUT_DIR = Path("/tmp/media_parts")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+
 MODEL_NAME = os.getenv("WHISPER_MODEL", "tiny")
 DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 MODEL = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
 
-
 def safe_name(name):
     name = os.path.basename(str(name))
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
     return name or "archivo"
-
 
 def download_url(url):
     url = (url or "").strip()
@@ -37,7 +36,6 @@ def download_url(url):
             if chunk:
                 f.write(chunk)
     return path
-
 
 def split_media(input_path, minutes):
     input_path = Path(input_path)
@@ -66,13 +64,15 @@ def split_media(input_path, minutes):
     if not parts:
         raise RuntimeError("No se generaron partes.")
 
+    return job_dir, parts
+
+def make_zip(job_dir, stem):
     zip_path = job_dir / f"{stem}_parts.zip"
+    parts = sorted(job_dir.glob(f"{stem}_part_*.ts"))
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for p in parts:
             z.write(p, arcname=p.name)
-
-    return str(zip_path), [str(p) for p in parts]
-
+    return str(zip_path)
 
 def transcribe_file(file_path, language):
     segments, info = MODEL.transcribe(
@@ -87,8 +87,7 @@ def transcribe_file(file_path, language):
             text_parts.append(t)
     return " ".join(text_parts).strip()
 
-
-def process(file_path, url, minutes, language, progress=gr.Progress()):
+def process_whole(file_path, url, language, progress=gr.Progress()):
     path = None
 
     if file_path:
@@ -97,54 +96,156 @@ def process(file_path, url, minutes, language, progress=gr.Progress()):
         path = download_url(url)
 
     if not path:
-        return "Sube un archivo o pega una URL directa.", None, None, None
+        return "Sube un archivo o pega una URL directa.", None, None, None, []
 
     try:
+        progress(0.1, desc="Transcribiendo archivo completo")
+        transcript = transcribe_file(path, language)
+        progress(1.0, desc="Terminado")
+        return "Listo: archivo completo transcrito.", None, None, transcript, []
+
+    except Exception as e:
+        return f"Error: {str(e)}", None, None, None, []
+
+def process_parts(file_path, url, minutes, language, progress=gr.Progress()):
+    path = None
+
+    if file_path:
+        path = str(file_path)
+    elif url and url.strip():
+        path = download_url(url)
+
+    if not path:
+        return "Sube un archivo o pega una URL directa.", None, None, None, [], gr.update(interactive=False)
+
+    try:
+        input_path = Path(path)
+        stem = safe_name(input_path.stem)
+
         progress(0.05, desc="Dividiendo archivo")
-        zip_path, parts = split_media(path, minutes)
+        job_dir, parts = split_media(path, minutes)
+        zip_path = make_zip(job_dir, stem)
 
         transcripts = []
-        total_parts = max(len(parts), 1)
+        results = []
 
+        total = max(len(parts), 1)
         for idx, part in enumerate(parts, 1):
-            progress((idx - 1) / total_parts, desc=f"Transcribiendo parte {idx}/{total_parts}")
-            transcript = transcribe_file(part, language)
-            transcripts.append(f"### Parte {idx}\n{Path(part).name}\n\n{transcript}\n")
+            progress((idx - 1) / total, desc=f"Transcribiendo parte {idx}/{total}")
+            try:
+                transcript = transcribe_file(part, language)
+                transcripts.append(f"### Parte {idx}\n{Path(part).name}\n\n{transcript}\n")
+                results.append(f"Parte {idx}: OK")
+            except Exception as e:
+                transcripts.append(f"### Parte {idx}\n{Path(part).name}\n\nERROR: {str(e)}\n")
+                results.append(f"Parte {idx}: ERROR")
 
         full_text = "\n".join(transcripts).strip()
+        ready = all("OK" in r for r in results)
         progress(1.0, desc="Terminado")
-        return f"Listo: {len(parts)} partes generadas y transcritas.", zip_path, parts, full_text
 
-    except subprocess.CalledProcessError as e:
-        err = e.stderr.decode("utf-8", errors="ignore") if e.stderr else str(e)
-        return f"Error FFmpeg:\n{err}", None, None, None
+        return (
+            f"Listo: {len(parts)} partes procesadas.",
+            zip_path,
+            [str(p) for p in parts],
+            full_text,
+            results,
+            gr.update(interactive=ready)
+        )
+
     except Exception as e:
-        return f"Error: {str(e)}", None, None, None
+        return f"Error: {str(e)}", None, None, None, [], gr.update(interactive=False)
 
+def retry_part(file_path, url, minutes, language, part_name, progress=gr.Progress()):
+    if not part_name:
+        return "Selecciona una parte para reintentar.", None, None, None, [], gr.update(interactive=False)
+
+    try:
+        path = None
+        if file_path:
+            path = str(file_path)
+        elif url and url.strip():
+            path = download_url(url)
+
+        if not path:
+            return "Sube un archivo o pega una URL directa.", None, None, None, [], gr.update(interactive=False)
+
+        input_path = Path(path)
+        stem = safe_name(input_path.stem)
+        job_dir = OUT_DIR / stem
+
+        part_path = job_dir / part_name
+        if not part_path.exists():
+            return f"No existe la parte: {part_name}", None, None, None, [], gr.update(interactive=False)
+
+        progress(0.2, desc=f"Reintentando {part_name}")
+        transcript = transcribe_file(str(part_path), language)
+        progress(1.0, desc="Reintento terminado")
+
+        return (
+            f"Reintento OK: {part_name}",
+            None,
+            None,
+            f"### {part_name}\n\n{transcript}\n",
+            [f"{part_name}: OK"],
+            gr.update(interactive=True)
+        )
+
+    except Exception as e:
+        return f"Error al reintentar: {str(e)}", None, None, None, [f"{part_name}: ERROR"], gr.update(interactive=False)
 
 with gr.Blocks(title="Media Studio") as demo:
     gr.Markdown("# Media Studio")
-    gr.Markdown("Sube un archivo de audio/video o pega un enlace directo. La app lo dividirá en partes y lo transcribirá automáticamente.")
+    gr.Markdown("Sube un archivo o pega un enlace directo. Puedes procesar todo junto o por partes con reintentos.")
 
     with gr.Row():
         file_in = gr.File(label="Sube audio o video", type="filepath")
         url_in = gr.Textbox(label="O pega una URL directa", placeholder="https://.../archivo.mp4")
 
+    mode = gr.Dropdown(
+        ["Todo junto", "Por partes"],
+        value="Por partes",
+        label="Modo de procesamiento"
+    )
+
     with gr.Row():
         minutes = gr.Slider(1, 15, value=5, step=1, label="Minutos por parte")
         language = gr.Dropdown(["Auto", "es", "en", "pt", "fr", "it", "de"], value="Auto", label="Idioma")
 
-    btn = gr.Button("Procesar y transcribir")
+    with gr.Row():
+        btn_whole = gr.Button("Procesar todo junto")
+        btn_parts = gr.Button("Dividir y procesar por partes")
+        btn_retry = gr.Button("Reintentar parte", interactive=False)
+        btn_send = gr.Button("Enviar", interactive=False)
+
+    part_selector = gr.Dropdown([], label="Parte a reintentar", interactive=True)
 
     status = gr.Textbox(label="Estado")
     zip_out = gr.File(label="ZIP descargable")
     parts_out = gr.Files(label="Partes generadas")
     transcript_out = gr.Textbox(label="Transcripción completa", lines=18)
+    part_results = gr.Textbox(label="Estado por parte", lines=10)
 
-    btn.click(
-        fn=process,
+    btn_whole.click(
+        fn=process_whole,
+        inputs=[file_in, url_in, language],
+        outputs=[status, zip_out, parts_out, transcript_out, part_results]
+    )
+
+    btn_parts.click(
+        fn=process_parts,
         inputs=[file_in, url_in, minutes, language],
-        outputs=[status, zip_out, parts_out, transcript_out]
+        outputs=[status, zip_out, parts_out, transcript_out, part_results, btn_send]
+    ).then(
+        lambda files: gr.Dropdown(choices=files if files else [], value=None, interactive=True),
+        inputs=parts_out,
+        outputs=part_selector
+    )
+
+    btn_retry.click(
+        fn=retry_part,
+        inputs=[file_in, url_in, minutes, language, part_selector],
+        outputs=[status, zip_out, parts_out, transcript_out, part_results, btn_send]
     )
 
 demo.queue().launch(
