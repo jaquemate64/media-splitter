@@ -88,7 +88,7 @@ def transcribe_file(file_path, language):
     return " ".join(text_parts).strip()
 
 
-def process(file_path, url, mode, minutes, language, progress=gr.Progress()):
+def process(file_path, url, minutes, language, progress=gr.Progress()):
     path = None
 
     if file_path:
@@ -100,12 +100,6 @@ def process(file_path, url, mode, minutes, language, progress=gr.Progress()):
         return "Sube un archivo o pega una URL directa.", None, None, None
 
     try:
-        if mode == "Completo":
-            progress(0.1, desc="Transcribiendo archivo completo")
-            transcript = transcribe_file(path, language)
-            progress(1.0, desc="Terminado")
-            return "Listo: archivo completo transcrito.", None, None, transcript
-
         progress(0.05, desc="Dividiendo archivo")
         zip_path, parts = split_media(path, minutes)
 
@@ -115,32 +109,26 @@ def process(file_path, url, mode, minutes, language, progress=gr.Progress()):
         for idx, part in enumerate(parts, 1):
             progress((idx - 1) / total_parts, desc=f"Transcribiendo parte {idx}/{total_parts}")
             transcript = transcribe_file(part, language)
-            transcripts.append(f"### Parte {idx}\n{Path(part).name}\n\n{transcript}\n")
+            transcripts.append(f"### Parte {idx}\\\\n{Path(part).name}\\\\n\\\\n{transcript}\\\\n")
 
-        full_text = "\n".join(transcripts).strip()
+        full_text = "\\\\n".join(transcripts).strip()
         progress(1.0, desc="Terminado")
         return f"Listo: {len(parts)} partes generadas y transcritas.", zip_path, parts, full_text
 
     except subprocess.CalledProcessError as e:
         err = e.stderr.decode("utf-8", errors="ignore") if e.stderr else str(e)
-        return f"Error FFmpeg:\n{err}", None, None, None
+        return f"Error FFmpeg:\\\\n{err}", None, None, None
     except Exception as e:
         return f"Error: {str(e)}", None, None, None
 
 
 with gr.Blocks(title="Media Studio") as demo:
     gr.Markdown("# Media Studio")
-    gr.Markdown("Sube un archivo de audio/video o pega un enlace directo. Puedes procesarlo completo o dividirlo en partes para transcribirlo.")
+    gr.Markdown("Sube un archivo de audio/video o pega un enlace directo. La app lo dividirá en partes y lo transcribirá automáticamente.")
 
     with gr.Row():
         file_in = gr.File(label="Sube audio o video", type="filepath")
         url_in = gr.Textbox(label="O pega una URL directa", placeholder="https://.../archivo.mp4")
-
-    mode = gr.Radio(
-        ["Completo", "Por partes"],
-        value="Por partes",
-        label="Modo de proceso"
-    )
 
     with gr.Row():
         minutes = gr.Slider(1, 15, value=5, step=1, label="Minutos por parte")
@@ -155,7 +143,7 @@ with gr.Blocks(title="Media Studio") as demo:
 
     btn.click(
         fn=process,
-        inputs=[file_in, url_in, mode, minutes, language],
+        inputs=[file_in, url_in, minutes, language],
         outputs=[status, zip_out, parts_out, transcript_out]
     )
 
